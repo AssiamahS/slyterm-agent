@@ -10,9 +10,10 @@ Free-tier GitHub Models caps every request at ~8K input tokens. Full-size agents
 
 ## What it can do
 
-- run shell commands and read/write files (agent loop: act → observe → repeat)
+- run shell commands; read, edit, and write files (agent loop: act → observe → repeat)
 - search the web (DuckDuckGo) and fetch pages
-- ride through free-tier rate limits automatically (gpt-4.1, falls back to gpt-4o-mini)
+- call your local MCP servers (auto-discovered from Claude Code's configs: `.mcp.json`, `~/.mcp.json`, `~/.claude.json`)
+- rotate across six free models (gpt-5 first, then gpt-5-mini, gpt-4.1, gpt-4.1-mini, gpt-4o-mini, llama-4-maverick) — each is a separate quota bucket, so 429s hop models instantly instead of waiting
 
 ## Install
 
@@ -33,4 +34,4 @@ slyterm -p "fix the failing test in this repo"   # one-shot
 
 ## Limits
 
-Free tier is roughly 50 requests/day on gpt-4.1 and 150/day on gpt-4o-mini, 8K tokens in / 4K out per request, resets midnight UTC. Each agent step is one request, so a complex task burns 5–15. Good for real daily use, not for leaving an agent grinding all night.
+Every model has its own free daily quota (roughly 50/day for high-tier models, 150/day for minis), 8K tokens in / 4K out per request, resets midnight UTC. The six-model rotation adds up to several hundred requests a day. Each agent step is one request, so a complex task burns 5–15. Good for real daily use, not for leaving an agent grinding all night.

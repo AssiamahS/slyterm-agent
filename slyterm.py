@@ -21,7 +21,16 @@ import urllib.request
 import urllib.parse
 
 API_URL = "https://models.github.ai/inference/chat/completions"
-MODELS = ["openai/gpt-4.1", "openai/gpt-4o-mini"]
+# Best-first; every model is a separate free-tier quota bucket, so the 429
+# sweep in chat_once effectively multiplies the daily allowance.
+MODELS = [
+    "openai/gpt-5",
+    "openai/gpt-5-mini",
+    "openai/gpt-4.1",
+    "openai/gpt-4.1-mini",
+    "openai/gpt-4o-mini",
+    "meta/llama-4-maverick-17b-128e-instruct-fp8",
+]
 MAX_TOOL_OUTPUT = 3500          # chars per tool result kept in context
 MAX_CONTEXT_CHARS = 22000       # ~5.5K tokens, leaves room under the 8K cap
 MAX_STEPS = 20                  # tool-loop safety stop
@@ -45,6 +54,20 @@ TOOLS = [
         "description": "Run a zsh command (60s timeout). Returns stdout+stderr, truncated.",
         "parameters": {"type": "object", "properties": {
             "command": {"type": "string"}}, "required": ["command"]}}},
+    {"type": "function", "function": {
+        "name": "read_file",
+        "description": "Read a file. Optional start_line/num_lines for big files.",
+        "parameters": {"type": "object", "properties": {
+            "path": {"type": "string"},
+            "start_line": {"type": "integer"}, "num_lines": {"type": "integer"}},
+            "required": ["path"]}}},
+    {"type": "function", "function": {
+        "name": "edit_file",
+        "description": "Replace an exact string in a file once. old_string must match exactly and be unique.",
+        "parameters": {"type": "object", "properties": {
+            "path": {"type": "string"}, "old_string": {"type": "string"},
+            "new_string": {"type": "string"}},
+            "required": ["path", "old_string", "new_string"]}}},
     {"type": "function", "function": {
         "name": "write_file",
         "description": "Write full content to a file (overwrites, makes parent dirs).",
@@ -214,6 +237,37 @@ def run_bash(command):
         return f"ERROR: {e}"
 
 
+def read_file(path, start_line=None, num_lines=None):
+    path = os.path.expanduser(path)
+    print(f"{DIM}read {path}{RESET}")
+    try:
+        with open(path) as f:
+            lines = f.readlines()
+        start = max((start_line or 1) - 1, 0)
+        chunk = lines[start:start + (num_lines or len(lines))]
+        out = "".join(f"{start + i + 1}\t{l}" for i, l in enumerate(chunk))
+        return truncate(out) or "(empty file)"
+    except Exception as e:
+        return f"ERROR: {e}"
+
+
+def edit_file(path, old_string, new_string):
+    path = os.path.expanduser(path)
+    print(f"{DIM}edit {path}{RESET}")
+    try:
+        text = open(path).read()
+        n = text.count(old_string)
+        if n == 0:
+            return "ERROR: old_string not found — read_file and match exactly."
+        if n > 1:
+            return f"ERROR: old_string appears {n} times — add context to make it unique."
+        with open(path, "w") as f:
+            f.write(text.replace(old_string, new_string, 1))
+        return f"Edited {path}"
+    except Exception as e:
+        return f"ERROR: {e}"
+
+
 def write_file(path, content):
     path = os.path.expanduser(path)
     print(f"{DIM}write {path} ({len(content)} chars){RESET}")
@@ -268,6 +322,11 @@ def fetch_url(url):
 def run_tool(name, args):
     if name == "bash":
         return run_bash(args.get("command", ""))
+    if name == "read_file":
+        return read_file(args.get("path", ""), args.get("start_line"), args.get("num_lines"))
+    if name == "edit_file":
+        return edit_file(args.get("path", ""), args.get("old_string", ""),
+                         args.get("new_string", ""))
     if name == "write_file":
         return write_file(args.get("path", ""), args.get("content", ""))
     if name == "web_search":
@@ -297,7 +356,7 @@ def trim(messages):
 
 def call_api(token, messages, model):
     body = json.dumps({"model": model, "messages": messages,
-                       "tools": TOOLS, "max_tokens": 2500}).encode()
+                       "tools": TOOLS, "max_completion_tokens": 3000}).encode()
     req = urllib.request.Request(API_URL, data=body, method="POST", headers={
         "Authorization": f"Bearer {token}", "Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=120) as r:
@@ -363,7 +422,7 @@ def main():
     if len(sys.argv) >= 3 and sys.argv[1] == "-p":
         agent(token, messages, " ".join(sys.argv[2:]))
         return
-    print(f"{BOLD}slyterm{RESET} — free agent on GitHub Models (gpt-4.1). "
+    print(f"{BOLD}slyterm{RESET} — free agent on GitHub Models (gpt-5 rotation). "
           f"{DIM}Ctrl-C or 'exit' to quit.{RESET}")
     while True:
         try:
