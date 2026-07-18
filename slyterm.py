@@ -180,24 +180,26 @@ def call_api(token, messages, model):
 
 
 def chat_once(token, messages):
-    """One API call with rate-limit retries and model fallback."""
-    for model in MODELS:
-        for attempt in range(3):
+    """One API call. On 429 hop to the next model immediately; only sleep
+    when every model is rate-limited in the same sweep."""
+    for sweep in range(4):
+        all_limited = True
+        for model in MODELS:
             try:
                 data = call_api(token, messages, model)
                 return data["choices"][0]["message"]
             except urllib.error.HTTPError as e:
                 detail = e.read().decode("utf-8", "replace")[:300]
-                if e.code == 429:
-                    wait = 20 * (attempt + 1)
-                    print(f"{YELLOW}rate limited on {model}, waiting {wait}s…{RESET}")
-                    time.sleep(wait)
-                    continue
-                print(f"{YELLOW}{model}: HTTP {e.code} {detail}{RESET}")
-                break  # non-429 → try next model
+                if e.code != 429:
+                    all_limited = False
+                    print(f"{YELLOW}{model}: HTTP {e.code} {detail}{RESET}")
             except Exception as e:
+                all_limited = False
                 print(f"{YELLOW}{model}: {e}{RESET}")
-                break
+        if all_limited and sweep < 3:
+            wait = 10 * (sweep + 1)
+            print(f"{YELLOW}all models rate-limited, retrying in {wait}s…{RESET}")
+            time.sleep(wait)
     return None
 
 
