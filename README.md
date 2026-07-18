@@ -18,7 +18,7 @@ Free-tier GitHub Models caps every request at ~8K input tokens. Full-size agents
 
 ```sh
 # needs: python3, curl, and a logged-in gh CLI (gh auth login)
-git clone https://github.com/AssiamahS/slyterm-agent && cd slyterm
+git clone https://github.com/AssiamahS/slyterm-agent && cd slyterm-agent
 mkdir -p ~/.local/bin
 printf '#!/bin/zsh\nexport GITHUB_TOKEN=${GITHUB_TOKEN:-$(gh auth token)}\nexec python3 %s/slyterm.py "$@"\n' "$PWD" > ~/.local/bin/slyterm
 chmod +x ~/.local/bin/slyterm
