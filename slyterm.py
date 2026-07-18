@@ -79,13 +79,28 @@ TOOLS = [
 # ---------------------------------------------------------------- MCP client
 
 def load_mcp_config():
-    """stdio MCP servers from Claude Code's config — same creds, no new sign-ins."""
-    try:
-        cfg = json.load(open(os.path.expanduser("~/.claude.json")))
-        return {name: s for name, s in cfg.get("mcpServers", {}).items()
-                if s.get("type", "stdio") == "stdio" and s.get("command")}
-    except Exception:
-        return {}
+    """stdio MCP servers from every place Claude Code keeps them — same
+    local servers and creds, no new sign-ins. Priority: cwd .mcp.json >
+    ~/.mcp.json > per-project > global ~/.claude.json."""
+    servers = {}
+
+    def take(block):
+        for name, s in (block or {}).items():
+            if name not in servers and s.get("type", "stdio") == "stdio" and s.get("command"):
+                servers[name] = s
+
+    def read(path):
+        try:
+            return json.load(open(os.path.expanduser(path)))
+        except Exception:
+            return {}
+
+    take(read(os.path.join(os.getcwd(), ".mcp.json")).get("mcpServers"))
+    take(read("~/.mcp.json").get("mcpServers"))
+    claude_cfg = read("~/.claude.json")
+    take(claude_cfg.get("projects", {}).get(os.getcwd(), {}).get("mcpServers"))
+    take(claude_cfg.get("mcpServers"))
+    return servers
 
 
 MCP_SERVERS = load_mcp_config()
