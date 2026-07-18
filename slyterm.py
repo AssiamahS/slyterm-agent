@@ -33,8 +33,10 @@ SYSTEM = (
     "Work autonomously: use tools to inspect, edit, run and verify, then give a short final answer. "
     "Prefer bash for anything it can do. Keep outputs small: use head/tail/grep instead of dumping big files. "
     "Never invent file contents — read before editing. "
-    "You have NO access to the user's email, messages, or cloud accounts — if asked, "
-    "say so plainly instead of guessing or grepping ~/Library. Current directory: {cwd}"
+    "You have NO access to the user's email or cloud accounts — if asked, "
+    "say so plainly instead of guessing or grepping ~/Library. "
+    "Local MCP servers are available: use mcp_tools(server) to discover a server's tools, "
+    "then mcp_call. Servers: {mcp}. Current directory: {cwd}"
 )
 
 TOOLS = [
@@ -59,7 +61,108 @@ TOOLS = [
         "description": "Fetch a URL and return its visible text, truncated.",
         "parameters": {"type": "object", "properties": {
             "url": {"type": "string"}}, "required": ["url"]}}},
+    {"type": "function", "function": {
+        "name": "mcp_tools",
+        "description": "List the tools an MCP server offers. Server names are in the system prompt.",
+        "parameters": {"type": "object", "properties": {
+            "server": {"type": "string"}}, "required": ["server"]}}},
+    {"type": "function", "function": {
+        "name": "mcp_call",
+        "description": "Call a tool on an MCP server. arguments_json is a JSON object string.",
+        "parameters": {"type": "object", "properties": {
+            "server": {"type": "string"}, "tool": {"type": "string"},
+            "arguments_json": {"type": "string"}},
+            "required": ["server", "tool", "arguments_json"]}}},
 ]
+
+
+# ---------------------------------------------------------------- MCP client
+
+def load_mcp_config():
+    """stdio MCP servers from Claude Code's config — same creds, no new sign-ins."""
+    try:
+        cfg = json.load(open(os.path.expanduser("~/.claude.json")))
+        return {name: s for name, s in cfg.get("mcpServers", {}).items()
+                if s.get("type", "stdio") == "stdio" and s.get("command")}
+    except Exception:
+        return {}
+
+
+MCP_SERVERS = load_mcp_config()
+_mcp_procs = {}
+
+
+class McpSession:
+    def __init__(self, name, spec):
+        env = {**os.environ, **spec.get("env", {})}
+        self.proc = subprocess.Popen(
+            [spec["command"], *spec.get("args", [])],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL, text=True, env=env)
+        self.next_id = 0
+        self.request("initialize", {
+            "protocolVersion": "2025-06-18",
+            "capabilities": {},
+            "clientInfo": {"name": "slyterm", "version": "1.0"}})
+        self.notify("notifications/initialized")
+
+    def _send(self, obj):
+        self.proc.stdin.write(json.dumps(obj) + "\n")
+        self.proc.stdin.flush()
+
+    def notify(self, method):
+        self._send({"jsonrpc": "2.0", "method": method})
+
+    def request(self, method, params, timeout=60):
+        self.next_id += 1
+        rid = self.next_id
+        self._send({"jsonrpc": "2.0", "id": rid, "method": method, "params": params})
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            line = self.proc.stdout.readline()
+            if not line:
+                raise RuntimeError("server exited")
+            try:
+                msg = json.loads(line)
+            except json.JSONDecodeError:
+                continue  # stray log line on stdout
+            if msg.get("id") == rid:
+                if "error" in msg:
+                    raise RuntimeError(msg["error"].get("message", str(msg["error"])))
+                return msg.get("result", {})
+        raise RuntimeError(f"timeout waiting for {method}")
+
+
+def mcp_session(server):
+    if server not in MCP_SERVERS:
+        raise RuntimeError(f"unknown server '{server}'. Available: {', '.join(MCP_SERVERS)}")
+    sess = _mcp_procs.get(server)
+    if sess is None or sess.proc.poll() is not None:
+        print(f"{DIM}mcp: starting {server}…{RESET}")
+        sess = _mcp_procs[server] = McpSession(server, MCP_SERVERS[server])
+    return sess
+
+
+def mcp_tools(server):
+    try:
+        tools = mcp_session(server).request("tools/list", {}).get("tools", [])
+        return "\n".join(f"- {t['name']}: {t.get('description', '')[:110]}"
+                         for t in tools) or "No tools."
+    except Exception as e:
+        return f"ERROR: {e}"
+
+
+def mcp_call(server, tool, arguments_json):
+    print(f"{DIM}mcp: {server}.{tool}{RESET}")
+    try:
+        args = json.loads(arguments_json or "{}")
+        result = mcp_session(server).request("tools/call",
+                                             {"name": tool, "arguments": args})
+        parts = [c.get("text", "") for c in result.get("content", [])
+                 if c.get("type") == "text"]
+        return "\n".join(parts) or json.dumps(result)[:MAX_TOOL_OUTPUT]
+    except Exception as e:
+        return f"ERROR: {e}"
 
 
 def gh_token():
@@ -156,6 +259,11 @@ def run_tool(name, args):
         return web_search(args.get("query", ""))
     if name == "fetch_url":
         return fetch_url(args.get("url", ""))
+    if name == "mcp_tools":
+        return mcp_tools(args.get("server", ""))
+    if name == "mcp_call":
+        return mcp_call(args.get("server", ""), args.get("tool", ""),
+                        args.get("arguments_json", "{}"))
     return f"ERROR: unknown tool {name}"
 
 
@@ -235,7 +343,8 @@ def agent(token, messages, user_input):
 
 def main():
     token = gh_token()
-    messages = [{"role": "system", "content": SYSTEM.format(cwd=os.getcwd())}]
+    messages = [{"role": "system", "content": SYSTEM.format(
+        cwd=os.getcwd(), mcp=", ".join(MCP_SERVERS) or "(none configured)")}]
     if len(sys.argv) >= 3 and sys.argv[1] == "-p":
         agent(token, messages, " ".join(sys.argv[2:]))
         return
