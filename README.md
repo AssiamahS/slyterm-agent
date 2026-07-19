@@ -10,10 +10,15 @@ Free-tier GitHub Models caps every request at ~8K input tokens. Full-size agents
 
 ## What it can do
 
-- run shell commands; read, edit, and write files (agent loop: act → observe → repeat)
+- **streaming answers** — text prints as it generates, like Claude Code
+- **context compaction** — when history outgrows the 8K window, old turns are summarized into a running digest instead of being thrown away, so long tasks stay coherent (`/compact` forces it)
+- **sub-agents** — the model can spawn a fresh-context worker for big-repo searches and get back only the conclusion; this is how an 8K agent handles repos its own context can't hold
+- **persistent plan** — the model keeps a markdown checklist that survives compaction (`/plan` shows it)
+- run shell commands; read, edit, and write files; dedicated `grep`/`glob` tools (agent loop: act → observe → repeat)
 - search the web (DuckDuckGo) and fetch pages
 - call your local MCP servers (auto-discovered from Claude Code's configs: `.mcp.json`, `~/.mcp.json`, `~/.claude.json`)
 - rotate across six free models (gpt-5 first, then gpt-5-mini, gpt-4.1, gpt-4.1-mini, gpt-4o-mini, llama-4-maverick) — each is a separate quota bucket, so 429s hop models instantly instead of waiting
+- REPL niceties: readline history (`~/.slyterm_history`), `/clear`, `/compact`, `/plan`, `/cd`, `/mcp`, Ctrl-C interrupts a run without losing context
 
 ## Install
 
