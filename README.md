@@ -19,6 +19,8 @@ Free-tier GitHub Models caps every request at ~8K input tokens. Full-size agents
 - call your local MCP servers (auto-discovered from Claude Code's configs: `.mcp.json`, `~/.mcp.json`, `~/.claude.json`)
 - rotate across six free models (gpt-5 first, then gpt-5-mini, gpt-4.1, gpt-4.1-mini, gpt-4o-mini, llama-4-maverick) — each is a separate quota bucket, so 429s hop models instantly instead of waiting
 - REPL niceties: readline history (`~/.slyterm_history`), `/clear`, `/compact`, `/plan`, `/cd`, `/mcp`, Ctrl-C interrupts a run without losing context
+- **project rules** — reads `./CLAUDE.md` (or `./AGENTS.md`) into its system prompt, capped so it can't eat the context window
+- **session resume** — every run saves to `~/.slyterm/session.json`; `slyterm -c` continues where you left off (works with `-p` too)
 
 ## Install
 
@@ -35,6 +37,7 @@ chmod +x ~/.local/bin/slyterm
 ```sh
 slyterm                          # interactive
 slyterm -p "fix the failing test in this repo"   # one-shot
+slyterm -c                       # continue last session
 ```
 
 ## Limits

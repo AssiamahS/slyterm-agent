@@ -16,6 +16,9 @@ What makes it feel like Claude Code despite the cap:
 Usage:
   slyterm                 interactive REPL (readline history, /commands)
   slyterm -p "prompt"     one-shot, prints answer and exits
+  slyterm -c              continue the previous session (also: -c -p "...")
+
+It also reads ./CLAUDE.md or ./AGENTS.md into its rules, like Claude Code.
 """
 
 import json
@@ -48,6 +51,8 @@ MAX_CONTEXT_CHARS = 20000       # ~5K tokens of history, leaves room under 8K
 MAX_STEPS = 25                  # tool-loop safety stop
 SUB_STEPS = 12                  # sub-agent loop cap
 HISTORY_FILE = os.path.expanduser("~/.slyterm_history")
+SESSION_FILE = os.path.expanduser("~/.slyterm/session.json")
+RULES_BUDGET = 1500             # chars of CLAUDE.md/AGENTS.md folded into system
 
 BOLD, DIM, CYAN, YELLOW, RED, GREEN, RESET = ("\033[1m", "\033[2m", "\033[36m",
                                               "\033[33m", "\033[31m", "\033[32m",
@@ -512,9 +517,26 @@ def summarize(token, old_summary, dropped):
     return old_summary
 
 
+def project_rules():
+    """Claude Code reads CLAUDE.md — so do we. cwd first, AGENTS.md as the
+    open-standard fallback, hard-capped so it can't eat the 8K window."""
+    for name in ("CLAUDE.md", "AGENTS.md"):
+        path = os.path.join(os.getcwd(), name)
+        try:
+            text = open(path).read().strip()
+        except OSError:
+            continue
+        if text:
+            if len(text) > RULES_BUDGET:
+                text = text[:RULES_BUDGET] + "\n[...rules truncated...]"
+            return f"\n\nPROJECT RULES ({name}):\n{text}"
+    return ""
+
+
 def build_messages(state, history):
     sysmsg = SYSTEM.format(cwd=os.getcwd(),
                            mcp=", ".join(MCP_SERVERS) or "(none configured)")
+    sysmsg += project_rules()
     if state["summary"]:
         sysmsg += f"\n\nEarlier in this session (compacted): {state['summary']}"
     if state["plan"]:
@@ -626,6 +648,31 @@ def agent(token, state, history, user_input):
     print(f"{RED}Stopped after {MAX_STEPS} steps.{RESET}")
 
 
+# ---------------------------------------------------------------- sessions
+
+def save_session(state, history):
+    try:
+        os.makedirs(os.path.dirname(SESSION_FILE), exist_ok=True)
+        with open(SESSION_FILE, "w") as f:
+            json.dump({"state": state, "history": history,
+                       "cwd": os.getcwd(), "ts": time.time()}, f)
+    except OSError:
+        pass
+
+
+def load_session(state, history):
+    try:
+        data = json.load(open(SESSION_FILE))
+    except (OSError, json.JSONDecodeError):
+        print(f"{YELLOW}no saved session to continue{RESET}")
+        return
+    state.update(data.get("state", {}))
+    history.extend(data.get("history", []))
+    age = int((time.time() - data.get("ts", 0)) / 60)
+    print(f"{DIM}resumed session from {age}m ago "
+          f"({len(history)} messages, cwd was {data.get('cwd', '?')}){RESET}")
+
+
 # ---------------------------------------------------------------- REPL
 
 HELP = f"""{BOLD}slash commands{RESET}
@@ -671,8 +718,13 @@ def main():
     token = gh_token()
     state = {"summary": "", "plan": ""}
     history = []
-    if len(sys.argv) >= 3 and sys.argv[1] == "-p":
-        agent(token, state, history, " ".join(sys.argv[2:]))
+    argv = sys.argv[1:]
+    if argv[:1] == ["-c"]:
+        load_session(state, history)
+        argv = argv[1:]
+    if argv[:1] == ["-p"] and len(argv) >= 2:
+        agent(token, state, history, " ".join(argv[1:]))
+        save_session(state, history)
         return
     if readline:
         try:
@@ -699,6 +751,7 @@ def main():
             agent(token, state, history, user)
         except KeyboardInterrupt:
             print(f"\n{YELLOW}interrupted — context kept, prompt again to continue{RESET}")
+    save_session(state, history)
     if readline:
         try:
             readline.write_history_file(HISTORY_FILE)
