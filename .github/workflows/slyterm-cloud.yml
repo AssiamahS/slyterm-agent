@@ -1,0 +1,52 @@
+name: slyterm-cloud
+
+# Free cloud agent: dispatch with a prompt, slyterm runs on the Actions
+# runner using the runner's own GITHUB_TOKEN (models: read) — burns the
+# repo's GitHub Models quota, not your laptop's session, and commits any
+# file changes back to the branch it ran on.
+
+on:
+  workflow_dispatch:
+    inputs:
+      prompt:
+        description: "Task for slyterm"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  models: read
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run slyterm
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PROMPT: ${{ inputs.prompt }}
+        run: |
+          python3 slyterm.py -p "$PROMPT" 2>&1 | tee run.log
+
+      - name: Commit changes back
+        env:
+          PROMPT: ${{ inputs.prompt }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A ':!run.log'
+          if ! git diff --cached --quiet; then
+            git commit -m "slyterm-cloud: ${PROMPT:0:60}"
+            git push
+          else
+            echo "no file changes to commit"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: run-log
+          path: run.log
