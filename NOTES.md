@@ -5,3 +5,4 @@
 - Google OAuth codes (agy/Antigravity login) are PKCE-bound: a code only redeems inside the same CLI run that printed the URL, never later.
 - Repo is github.com/AssiamahS/slyterm-agent — `slyTerm` on the same account is an unrelated Swift app; never push this project there.
 - streaming SSE tool_calls arrive as fragments keyed by index — stitch name/arguments strings together; free-tier 429s raise BEFORE the stream opens, so model-hop logic is unchanged
+cloud runner verified.
